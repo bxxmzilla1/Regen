@@ -22,11 +22,9 @@ import {
   Download,
   Clock,
   Info,
-  LogIn,
   LogOut,
   User,
   Cloud,
-  CloudOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RegenerationMode, RegenerationOutput } from './types';
@@ -34,7 +32,7 @@ import { regenerateText } from './lib/gemini';
 import { exportToPDF } from './lib/export';
 import { fetchGenerations, saveGeneration, deleteGeneration } from './lib/supabase';
 import { useAuth } from './hooks/useAuth';
-import { AuthModal } from './components/AuthModal';
+import { AuthPage } from './components/AuthPage';
 
 export default function App() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -50,49 +48,31 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const modes: RegenerationMode[] = [
     'Viral', 'SEO', 'Aesthetic', 'Fanpage', 'TikTok', 'YouTube Shorts', 'Clean Professional'
   ];
 
-  // Load history: from Supabase when signed in, localStorage otherwise
+  // Load history from Supabase on sign-in
   const loadHistory = useCallback(async () => {
-    if (user) {
-      setIsSyncing(true);
-      try {
-        const remote = await fetchGenerations(user.id);
-        setHistory(remote);
-      } catch {
-        showToast('Could not load cloud history', 'error');
-        // Fallback to localStorage
-        const saved = localStorage.getItem('regen_history');
-        if (saved) {
-          try { setHistory(JSON.parse(saved)); } catch { /* ignore */ }
-        }
-      } finally {
-        setIsSyncing(false);
-      }
-    } else {
-      const saved = localStorage.getItem('regen_history');
-      if (saved) {
-        try { setHistory(JSON.parse(saved)); } catch { /* ignore */ }
-      }
+    if (!user) return;
+    setIsSyncing(true);
+    try {
+      const remote = await fetchGenerations(user.id);
+      setHistory(remote);
+    } catch {
+      showToast('Could not load cloud history', 'error');
+    } finally {
+      setIsSyncing(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   useEffect(() => {
-    if (!authLoading) loadHistory();
-  }, [authLoading, loadHistory]);
-
-  // Persist to localStorage for guest users
-  useEffect(() => {
-    if (!user) {
-      localStorage.setItem('regen_history', JSON.stringify(history));
-    }
-  }, [history, user]);
+    if (!authLoading && user) loadHistory();
+    if (!user) setHistory([]);
+  }, [authLoading, user, loadHistory]);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -177,13 +157,25 @@ export default function App() {
     item.modes.some(m => m.toLowerCase().includes(historySearch.toLowerCase()))
   );
 
+  // Loading screen while checking session
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-teal flex items-center justify-center shadow-[0_0_20px_rgba(0,245,255,0.4)]">
+            <RefreshCw className="w-6 h-6 text-black animate-spin" />
+          </div>
+          <p className="text-zinc-600 text-xs uppercase tracking-widest font-mono">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Auth gate — must be signed in to use the app
+  if (!user) return <AuthPage />;
+
   return (
     <div className="min-h-screen bg-black text-slate-100 font-sans selection:bg-teal selection:text-black">
-      {/* Auth Modal */}
-      <AnimatePresence>
-        {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
-      </AnimatePresence>
-
       {/* Sidebar Overlay */}
       <AnimatePresence>
         {showHistory && (
@@ -209,9 +201,9 @@ export default function App() {
             <div className="flex items-center gap-2">
               <History className="w-5 h-5 text-teal" />
               <h2 className="text-lg font-medium tracking-tight">History</h2>
-              {isSyncing && <RefreshCw className="w-3.5 h-3.5 text-zinc-500 animate-spin" />}
-              {user && !isSyncing && <Cloud className="w-3.5 h-3.5 text-teal/60" />}
-              {!user && <CloudOff className="w-3.5 h-3.5 text-zinc-600" />}
+              {isSyncing
+                ? <RefreshCw className="w-3.5 h-3.5 text-zinc-500 animate-spin" />
+                : <Cloud className="w-3.5 h-3.5 text-teal/60" />}
             </div>
             <button 
               onClick={() => setShowHistory(false)}
@@ -221,17 +213,6 @@ export default function App() {
             </button>
           </div>
           
-          {/* Cloud sync notice for guests */}
-          {!user && (
-            <button
-              onClick={() => { setShowHistory(false); setShowAuthModal(true); }}
-              className="w-full mb-3 flex items-center gap-2 bg-teal/5 border border-teal/10 rounded-lg px-3 py-2.5 text-left hover:bg-teal/10 transition-colors"
-            >
-              <CloudOff className="w-3.5 h-3.5 text-teal/60 shrink-0" />
-              <span className="text-[10px] text-zinc-400">Sign in to sync history across devices</span>
-            </button>
-          )}
-
           <div className="relative mb-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
             <input 
@@ -335,33 +316,21 @@ export default function App() {
               <span className="text-[10px] uppercase font-bold tracking-widest text-zinc-300">Creator Hub</span>
             </div>
 
-            {authLoading ? (
-              <div className="w-8 h-8 rounded-full bg-zinc-900 animate-pulse" />
-            ) : user ? (
-              <div className="flex items-center gap-2">
-                <div className="hidden sm:flex items-center gap-2 bg-zinc-900 rounded-full pl-2.5 pr-3 py-1.5 border border-zinc-800">
-                  <div className="w-5 h-5 rounded-full bg-teal/20 border border-teal/30 flex items-center justify-center">
-                    <User className="w-3 h-3 text-teal" />
-                  </div>
-                  <span className="text-[10px] text-zinc-300 font-medium max-w-[120px] truncate">{user.email}</span>
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:flex items-center gap-2 bg-zinc-900 rounded-full pl-2.5 pr-3 py-1.5 border border-zinc-800">
+                <div className="w-5 h-5 rounded-full bg-teal/20 border border-teal/30 flex items-center justify-center">
+                  <User className="w-3 h-3 text-teal" />
                 </div>
-                <button
-                  onClick={signOut}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-full text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-red-400 hover:border-red-500/30 transition-colors"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Sign Out</span>
-                </button>
+                <span className="text-[10px] text-zinc-300 font-medium max-w-[140px] truncate">{user.email}</span>
               </div>
-            ) : (
               <button
-                onClick={() => setShowAuthModal(true)}
-                className="flex items-center gap-1.5 px-4 py-2 bg-teal text-black font-bold rounded-full text-[10px] uppercase tracking-widest hover:bg-white transition-colors"
+                onClick={signOut}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-full text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-red-400 hover:border-red-500/30 transition-colors"
               >
-                <LogIn className="w-3.5 h-3.5" />
-                Sign In
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Sign Out</span>
               </button>
-            )}
+            </div>
           </div>
         </nav>
 
@@ -435,15 +404,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Guest save notice */}
-            {!user && (
-              <p className="text-center text-[10px] text-zinc-600 mt-4">
-                <button onClick={() => setShowAuthModal(true)} className="text-teal/70 hover:text-teal underline underline-offset-2 transition-colors">
-                  Sign in
-                </button>{' '}
-                to save generations to the cloud
-              </p>
-            )}
           </div>
 
           {/* Output Section */}
