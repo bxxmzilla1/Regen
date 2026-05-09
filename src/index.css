@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+@theme {
+  --color-teal: #00f5ff;
+  --color-teal-glow: rgba(0, 245, 255, 0.5);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-slate-100;
+  }
+}
+
+@layer components {
+  .glow-border {
+    @apply border border-teal/20 hover:border-teal/50 shadow-[0_0_15px_rgba(0,245,255,0.05)] hover:shadow-[0_0_20px_rgba(0,245,255,0.15)] transition-all duration-300;
+  }
+  
+  .glow-text {
+    @apply text-teal shadow-[0_0_10px_rgba(0,245,255,0.5)];
+    text-shadow: 0 0 8px rgba(0, 245, 255, 0.4);
+  }
+
+  .teal-gradient {
+    @apply bg-gradient-to-br from-teal/20 via-black to-black;
+  }
+
+  .glass-card {
+    @apply bg-zinc-900/50 backdrop-blur-md border border-zinc-800 rounded-2xl;
+  }
+}

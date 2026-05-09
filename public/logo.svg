@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f0f0f"/>
+      <stop offset="100%" style="stop-color:#1a1a2e"/>
+    </linearGradient>
+    <linearGradient id="arc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#a855f7"/>
+      <stop offset="50%" style="stop-color:#6366f1"/>
+      <stop offset="100%" style="stop-color:#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="text-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#a855f7"/>
+      <stop offset="100%" style="stop-color:#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <!-- Regeneration arc -->
+  <path d="M 256 120 A 136 136 0 1 1 148 316" fill="none" stroke="url(#arc)" stroke-width="28" stroke-linecap="round"/>
+  <!-- Arrow tip pointing left-down -->
+  <polygon points="118,288 148,340 178,298" fill="url(#arc)"/>
+  <!-- Center dot / spark -->
+  <circle cx="256" cy="256" r="22" fill="url(#arc)" opacity="0.9"/>
+  <!-- REGEN text -->
+  <text x="256" y="454" font-family="'Arial Black', 'Helvetica Neue', Arial, sans-serif" font-weight="900" font-size="72" fill="url(#text-grad)" text-anchor="middle" letter-spacing="8">REGEN</text>
+</svg>
