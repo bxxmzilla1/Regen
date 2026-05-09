@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Zap, 
   Search, 
@@ -12,8 +12,6 @@ import {
   Check, 
   RefreshCw, 
   Sparkles, 
-  LayoutDashboard,
-  Youtube,
   Video,
   Hash,
   MessageSquare,
@@ -23,15 +21,24 @@ import {
   Trash2,
   Download,
   Clock,
-  ExternalLink,
-  Info
+  Info,
+  LogIn,
+  LogOut,
+  User,
+  Cloud,
+  CloudOff,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RegenerationMode, RegenerationOutput } from './types';
 import { regenerateText } from './lib/gemini';
 import { exportToPDF } from './lib/export';
+import { fetchGenerations, saveGeneration, deleteGeneration } from './lib/supabase';
+import { useAuth } from './hooks/useAuth';
+import { AuthModal } from './components/AuthModal';
 
 export default function App() {
+  const { user, loading: authLoading, signOut } = useAuth();
+
   const [inputText, setInputText] = useState('');
   const [selectedModes, setSelectedModes] = useState<RegenerationMode[]>(['Viral']);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -43,27 +50,54 @@ export default function App() {
   const [historySearch, setHistorySearch] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-  // Load history from localStorage
-  useEffect(() => {
-    const savedHistory = localStorage.getItem('regen_history');
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error('Failed to parse history', e);
-      }
-    }
-  }, []);
-
-  // Save history to localStorage
-  useEffect(() => {
-    localStorage.setItem('regen_history', JSON.stringify(history));
-  }, [history]);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const modes: RegenerationMode[] = [
     'Viral', 'SEO', 'Aesthetic', 'Fanpage', 'TikTok', 'YouTube Shorts', 'Clean Professional'
   ];
+
+  // Load history: from Supabase when signed in, localStorage otherwise
+  const loadHistory = useCallback(async () => {
+    if (user) {
+      setIsSyncing(true);
+      try {
+        const remote = await fetchGenerations(user.id);
+        setHistory(remote);
+      } catch {
+        showToast('Could not load cloud history', 'error');
+        // Fallback to localStorage
+        const saved = localStorage.getItem('regen_history');
+        if (saved) {
+          try { setHistory(JSON.parse(saved)); } catch { /* ignore */ }
+        }
+      } finally {
+        setIsSyncing(false);
+      }
+    } else {
+      const saved = localStorage.getItem('regen_history');
+      if (saved) {
+        try { setHistory(JSON.parse(saved)); } catch { /* ignore */ }
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  useEffect(() => {
+    if (!authLoading) loadHistory();
+  }, [authLoading, loadHistory]);
+
+  // Persist to localStorage for guest users
+  useEffect(() => {
+    if (!user) {
+      localStorage.setItem('regen_history', JSON.stringify(history));
+    }
+  }, [history, user]);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
 
   const handleRegenerate = async (isVariation = false) => {
     const textToUse = isVariation && currentOutput ? currentOutput.originalText : inputText;
@@ -77,9 +111,18 @@ export default function App() {
     try {
       const output = await regenerateText(textToUse, modesToUse);
       setCurrentOutput(output);
-      setHistory(prev => [output, ...prev].slice(0, 20));
-    } catch (error) {
-      alert('Efficiency error: Could not process request.');
+      setHistory(prev => [output, ...prev].slice(0, 50));
+
+      // Save to Supabase if signed in
+      if (user) {
+        try {
+          await saveGeneration(user.id, output);
+        } catch {
+          showToast('Saved locally — cloud sync failed', 'error');
+        }
+      }
+    } catch {
+      showToast('Could not process request. Try again.', 'error');
     } finally {
       setIsGenerating(false);
       setIsRegeneratingVariations(false);
@@ -100,8 +143,11 @@ export default function App() {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const deleteHistoryItem = (id: string) => {
+  const handleDeleteHistoryItem = async (id: string) => {
     setHistory(prev => prev.filter(item => item.id !== id));
+    if (user) {
+      try { await deleteGeneration(id); } catch { /* silent */ }
+    }
   };
 
   const getRelativeTime = (timestamp: number) => {
@@ -114,17 +160,12 @@ export default function App() {
     return rtf.format(Math.round(elapsed / 86400), 'day');
   };
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-    setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
   const handleDownloadPDF = async (output: RegenerationOutput) => {
     setIsDownloading(true);
     try {
       await exportToPDF(output);
       showToast('PDF Exported Successfully');
-    } catch (error) {
+    } catch {
       showToast('Export failed', 'error');
     } finally {
       setIsDownloading(false);
@@ -138,6 +179,11 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-slate-100 font-sans selection:bg-teal selection:text-black">
+      {/* Auth Modal */}
+      <AnimatePresence>
+        {showAuthModal && <AuthModal onClose={() => setShowAuthModal(false)} />}
+      </AnimatePresence>
+
       {/* Sidebar Overlay */}
       <AnimatePresence>
         {showHistory && (
@@ -154,9 +200,7 @@ export default function App() {
       {/* History Sidebar */}
       <motion.aside 
         initial={false}
-        animate={{ 
-          x: showHistory ? 0 : -320,
-        }}
+        animate={{ x: showHistory ? 0 : -320 }}
         transition={{ type: 'spring', damping: 20 }}
         className="fixed top-0 left-0 bottom-0 w-80 bg-zinc-950 border-r border-zinc-800 z-50 overflow-y-auto"
       >
@@ -165,6 +209,9 @@ export default function App() {
             <div className="flex items-center gap-2">
               <History className="w-5 h-5 text-teal" />
               <h2 className="text-lg font-medium tracking-tight">History</h2>
+              {isSyncing && <RefreshCw className="w-3.5 h-3.5 text-zinc-500 animate-spin" />}
+              {user && !isSyncing && <Cloud className="w-3.5 h-3.5 text-teal/60" />}
+              {!user && <CloudOff className="w-3.5 h-3.5 text-zinc-600" />}
             </div>
             <button 
               onClick={() => setShowHistory(false)}
@@ -174,6 +221,17 @@ export default function App() {
             </button>
           </div>
           
+          {/* Cloud sync notice for guests */}
+          {!user && (
+            <button
+              onClick={() => { setShowHistory(false); setShowAuthModal(true); }}
+              className="w-full mb-3 flex items-center gap-2 bg-teal/5 border border-teal/10 rounded-lg px-3 py-2.5 text-left hover:bg-teal/10 transition-colors"
+            >
+              <CloudOff className="w-3.5 h-3.5 text-teal/60 shrink-0" />
+              <span className="text-[10px] text-zinc-400">Sign in to sync history across devices</span>
+            </button>
+          )}
+
           <div className="relative mb-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
             <input 
@@ -211,7 +269,7 @@ export default function App() {
                     {item.modes.length > 2 && <span className="text-[8px] text-zinc-600 px-1.5 py-0.5">+{item.modes.length - 2}</span>}
                   </div>
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                     <button 
+                    <button 
                       onClick={(e) => {
                         e.stopPropagation();
                         copyToClipboard(item.originalText, `hist-copy-${item.id}`);
@@ -224,7 +282,7 @@ export default function App() {
                     <button 
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteHistoryItem(item.id);
+                        handleDeleteHistoryItem(item.id);
                       }}
                       className="p-1.5 bg-zinc-900 hover:bg-red-500/10 hover:text-red-400 rounded-md transition-all"
                     >
@@ -270,11 +328,40 @@ export default function App() {
               <h1 className="text-2xl font-bold tracking-tighter">REGEN<span className="text-teal text-sm ml-1">AI</span></h1>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+
+          <div className="flex items-center gap-3">
             <div className="hidden md:flex items-center gap-2 bg-zinc-900 rounded-full px-3 py-1.5 border border-zinc-800">
               <Zap className="w-3.5 h-3.5 text-teal fill-teal" />
               <span className="text-[10px] uppercase font-bold tracking-widest text-zinc-300">Creator Hub</span>
             </div>
+
+            {authLoading ? (
+              <div className="w-8 h-8 rounded-full bg-zinc-900 animate-pulse" />
+            ) : user ? (
+              <div className="flex items-center gap-2">
+                <div className="hidden sm:flex items-center gap-2 bg-zinc-900 rounded-full pl-2.5 pr-3 py-1.5 border border-zinc-800">
+                  <div className="w-5 h-5 rounded-full bg-teal/20 border border-teal/30 flex items-center justify-center">
+                    <User className="w-3 h-3 text-teal" />
+                  </div>
+                  <span className="text-[10px] text-zinc-300 font-medium max-w-[120px] truncate">{user.email}</span>
+                </div>
+                <button
+                  onClick={signOut}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-full text-[10px] font-bold uppercase tracking-widest text-zinc-400 hover:text-red-400 hover:border-red-500/30 transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Sign Out</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="flex items-center gap-1.5 px-4 py-2 bg-teal text-black font-bold rounded-full text-[10px] uppercase tracking-widest hover:bg-white transition-colors"
+              >
+                <LogIn className="w-3.5 h-3.5" />
+                Sign In
+              </button>
+            )}
           </div>
         </nav>
 
@@ -333,7 +420,7 @@ export default function App() {
             <div className="mt-6 flex justify-center">
               <button
                 disabled={isGenerating || !inputText.trim()}
-                onClick={handleRegenerate}
+                onClick={() => handleRegenerate()}
                 className="group relative w-full md:w-auto min-w-[240px] bg-teal text-black font-bold py-4 px-8 rounded-xl flex items-center justify-center gap-3 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white hover:text-black overflow-hidden"
               >
                 <div className="absolute inset-0 bg-teal glow-pulse" />
@@ -347,6 +434,16 @@ export default function App() {
                 </span>
               </button>
             </div>
+
+            {/* Guest save notice */}
+            {!user && (
+              <p className="text-center text-[10px] text-zinc-600 mt-4">
+                <button onClick={() => setShowAuthModal(true)} className="text-teal/70 hover:text-teal underline underline-offset-2 transition-colors">
+                  Sign in
+                </button>{' '}
+                to save generations to the cloud
+              </p>
+            )}
           </div>
 
           {/* Output Section */}
@@ -478,42 +575,42 @@ export default function App() {
 
                 {/* Hooks & Hashtags */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                   <div className="lg:col-span-1 border-r border-zinc-900 pr-0 lg:pr-8">
-                     <div className="flex items-center gap-2 mb-4">
-                        <Sparkles className="w-4 h-4 text-teal" />
-                        <h4 className="text-sm font-bold uppercase tracking-widest">Hooks</h4>
-                     </div>
-                     <div className="space-y-3">
-                        {currentOutput.hooks.map((hook, idx) => (
-                          <div key={idx} className="p-3 bg-zinc-950 rounded-lg border border-zinc-900 text-zinc-400 text-xs font-medium cursor-pointer hover:bg-zinc-900 transition-colors" onClick={() => copyToClipboard(hook, `hook-${idx}`)}>
-                            {hook}
-                            {copiedId === `hook-${idx}` && <span className="float-right text-green-400"><Check className="w-3 h-3" /></span>}
-                          </div>
-                        ))}
-                     </div>
-                   </div>
+                  <div className="lg:col-span-1 border-r border-zinc-900 pr-0 lg:pr-8">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles className="w-4 h-4 text-teal" />
+                      <h4 className="text-sm font-bold uppercase tracking-widest">Hooks</h4>
+                    </div>
+                    <div className="space-y-3">
+                      {currentOutput.hooks.map((hook, idx) => (
+                        <div key={idx} className="p-3 bg-zinc-950 rounded-lg border border-zinc-900 text-zinc-400 text-xs font-medium cursor-pointer hover:bg-zinc-900 transition-colors" onClick={() => copyToClipboard(hook, `hook-${idx}`)}>
+                          {hook}
+                          {copiedId === `hook-${idx}` && <span className="float-right text-green-400"><Check className="w-3 h-3" /></span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
-                   <div className="lg:col-span-2">
-                     <div className="flex items-center gap-2 mb-4">
-                        <Hash className="w-4 h-4 text-teal" />
-                        <h4 className="text-sm font-bold uppercase tracking-widest">SEO Hashtags</h4>
-                     </div>
-                     <div className="flex flex-wrap gap-2">
-                        {currentOutput.hashtags.map((tag, idx) => (
-                          <span 
-                            key={idx}
-                            onClick={() => copyToClipboard(tag, `tag-${idx}`)}
-                            className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all cursor-pointer ${
-                              copiedId === `tag-${idx}` 
-                                ? 'bg-teal/20 border-teal text-teal shadow-[0_0_10px_rgba(0,245,255,0.2)]' 
-                                : 'bg-zinc-950 border-zinc-900 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300'
-                            }`}
-                          >
-                            {tag}
-                          </span>
-                        ))}
-                     </div>
-                   </div>
+                  <div className="lg:col-span-2">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Hash className="w-4 h-4 text-teal" />
+                      <h4 className="text-sm font-bold uppercase tracking-widest">SEO Hashtags</h4>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {currentOutput.hashtags.map((tag, idx) => (
+                        <span 
+                          key={idx}
+                          onClick={() => copyToClipboard(tag, `tag-${idx}`)}
+                          className={`px-3 py-1.5 rounded-lg border text-xs font-mono transition-all cursor-pointer ${
+                            copiedId === `tag-${idx}` 
+                              ? 'bg-teal/20 border-teal text-teal shadow-[0_0_10px_rgba(0,245,255,0.2)]' 
+                              : 'bg-zinc-950 border-zinc-900 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300'
+                          }`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -522,20 +619,20 @@ export default function App() {
           {/* Initial State Helper */}
           {!currentOutput && !isGenerating && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-12">
-               <div className="glass-card p-8 border-dashed border-zinc-800 flex flex-col items-center text-center group hover:border-teal/30 transition-all">
-                  <div className="w-12 h-12 rounded-2xl bg-zinc-950 border border-zinc-900 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                     <Sparkles className="w-6 h-6 text-teal" />
-                  </div>
-                  <h4 className="text-lg font-bold mb-2 italic">Viral Intelligence</h4>
-                  <p className="text-sm text-zinc-500">Optimized for TikTok, Reels, and Shorts algorithms with curiosity-driven hooks.</p>
-               </div>
-               <div className="glass-card p-8 border-dashed border-zinc-800 flex flex-col items-center text-center group hover:border-teal/30 transition-all">
-                  <div className="w-12 h-12 rounded-2xl bg-zinc-950 border border-zinc-900 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                     <Search className="w-6 h-6 text-teal" />
-                  </div>
-                  <h4 className="text-lg font-bold mb-2 italic">SEO Dominance</h4>
-                  <p className="text-sm text-zinc-500">Natural keyword placement to improve discoverability without sounding robotic.</p>
-               </div>
+              <div className="glass-card p-8 border-dashed border-zinc-800 flex flex-col items-center text-center group hover:border-teal/30 transition-all">
+                <div className="w-12 h-12 rounded-2xl bg-zinc-950 border border-zinc-900 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Sparkles className="w-6 h-6 text-teal" />
+                </div>
+                <h4 className="text-lg font-bold mb-2 italic">Viral Intelligence</h4>
+                <p className="text-sm text-zinc-500">Optimized for TikTok, Reels, and Shorts algorithms with curiosity-driven hooks.</p>
+              </div>
+              <div className="glass-card p-8 border-dashed border-zinc-800 flex flex-col items-center text-center group hover:border-teal/30 transition-all">
+                <div className="w-12 h-12 rounded-2xl bg-zinc-950 border border-zinc-900 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                  <Search className="w-6 h-6 text-teal" />
+                </div>
+                <h4 className="text-lg font-bold mb-2 italic">SEO Dominance</h4>
+                <p className="text-sm text-zinc-500">Natural keyword placement to improve discoverability without sounding robotic.</p>
+              </div>
             </div>
           )}
         </div>

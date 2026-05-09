@@ -4,8 +4,9 @@ AI-powered text regeneration with multiple creative modes, built with React + Vi
 
 ## Features
 
-- Multiple regeneration modes (Professional, Creative, Casual, Academic, etc.)
-- Regeneration history with localStorage persistence
+- Multiple regeneration modes (Viral, SEO, Aesthetic, TikTok, YouTube Shorts, etc.)
+- **Auth** — email/password sign up & sign in powered by Supabase Auth
+- **Cloud history** — generations saved to Supabase (per-user, RLS-protected); falls back to localStorage for guests
 - PDF export
 - **PWA** — installable on desktop and mobile, works offline (UI only)
 - Dark, modern UI with Tailwind CSS v4 and Motion animations
@@ -42,15 +43,22 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and add your Gemini API key:
+Edit `.env` with your keys:
 
+```env
+GEMINI_API_KEY=your_gemini_key
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
-GEMINI_API_KEY=your_api_key_here
-```
 
-Get a free key at [Google AI Studio](https://aistudio.google.com/apikey).
+- Gemini key: [Google AI Studio](https://aistudio.google.com/apikey)
+- Supabase keys: [supabase.com](https://supabase.com) → your project → **Settings → API**
 
-### 4. Start the dev server
+### 4. Set up the Supabase database
+
+In your Supabase project, go to **SQL Editor** and run the contents of [`supabase/schema.sql`](./supabase/schema.sql). This creates the `generations` table with Row Level Security.
+
+### 5. Start the dev server
 
 ```bash
 npm run dev
@@ -82,7 +90,9 @@ git push -u origin main
 
 2. Go to [vercel.com](https://vercel.com) → **Add New Project** → import the GitHub repo.
 3. In **Environment Variables**, add:
-   - `GEMINI_API_KEY` = `<your api key>`
+   - `GEMINI_API_KEY` = `<your Gemini key>`
+   - `VITE_SUPABASE_URL` = `https://your-project.supabase.co`
+   - `VITE_SUPABASE_ANON_KEY` = `<your Supabase anon key>`
 4. Click **Deploy**.
 
 Vercel auto-detects Vite and uses the `vercel.json` configuration already included in this repo.
@@ -106,8 +116,10 @@ The service worker pre-caches all static assets. The Gemini API calls are always
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `GEMINI_API_KEY` | Yes | Google Gemini API key |
+| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Yes | Supabase anon/public key (safe to expose) |
 
-> **Note:** This key is embedded at build time by Vite. It will be visible in the browser bundle — for production use, consider proxying requests through a backend.
+> **Note:** `GEMINI_API_KEY` is embedded at build time by Vite and will be visible in the browser bundle. For production, consider proxying Gemini calls through a backend. Supabase's anon key is designed to be public — Row Level Security policies enforce data access.
 
 ---
 
